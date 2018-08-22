@@ -1,0 +1,195 @@
+from filterpy.kalman import unscented_transform, MerweScaledSigmaPoints
+from filterpy.kalman import UnscentedKalmanFilter as UKF
+import scipy.stats as stats
+from filterpy.kalman import KalmanFilter
+from filterpy.common import Q_discrete_white_noise
+from scipy.integrate import odeint
+from numpy.random import randn
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+
+
+# analytical solution to the falling body with drag
+# def model(y, t):
+#     g = -9.81
+#     b = 200
+#     x, v = y
+#     dvdt = [v, (-0.0034 * g * np.exp(-x / 22000) * v**2) / (2 * b) + g]
+#     return dvdt
+#
+#
+# y0 = [1e7, 0.0]
+# t = np.linspace(0, 3000, 101)
+# sol = odeint(model, y0, t)
+# plt.plot(t, sol[:, 0])
+# plt.show()
+
+
+dt = 0.01
+std_x = 25
+std_model = [1,1,1]#.001
+g = 32.2
+np.random.seed(500)
+Q = [3,1, 3]
+starting_conditions = [200000., -6000., 500.]
+est_starting_conds = [200025., -6150., 800]
+P = [25.**2, 150**2, 300**2]
+update_rate = 0.1
+
+
+class falling_object(object):
+    def __init__(self, pos, vel, b, std, std_mdl):
+        self.x = pos
+        self.v = vel
+        self.std_x = std
+        self.std_model = std_mdl
+        self.meas = [0, 0]
+        self.b = b + randn() * self.std_model[2]
+
+    def update(self, dt):
+        self.x += self.v*dt + randn()*self.std_model[0]
+        self.v += ((0.0034 * g * np.exp(-self.x * 4.54545e-5) * self.v ** 2) / (2 * self.b) - g) * dt + randn() \
+                     * self.std_model[1]
+        return self.x
+
+    def measure(self):
+        self.meas[0] = randn()*self.std_x + self.x
+        self.meas[1] = randn() * self.std_x + self.v
+        return self.meas
+
+
+
+def f_cv(x, dt):
+    """ state transition function for a 1D
+    accelerating object"""
+    g = 32.2
+
+    x[0] = x[0] + x[1]*dt
+    x[1] = x[1] + ((0.0034 * g * np.exp(-x[0] * 4.54545e-5) * x[1] ** 2) / (2 * x[2]) - g) * dt
+    x[2] = x[2]
+    return x
+
+
+def h_cv(x):
+    """Measurement function -
+        measuring only position"""
+    return np.array([x[0]])
+
+
+
+# for i in range(-5,5):
+points = MerweScaledSigmaPoints(n=3, alpha=-1, beta=2., kappa=5)
+ukf = UKF(dim_x=3, dim_z=1, fx=f_cv, hx=h_cv, dt=dt, points=points)
+ukf.x = np.array(est_starting_conds)
+ukf.P = np.diag(P)
+ukf.R = np.array([[std_x**2]])
+#ukf.H = np.array([[1]])
+ukf.Q = np.diag(Q)#Q_discrete_white_noise(2, dt=dt, var=dt)
+uxs = []
+errx = []
+errv = []
+errb = []
+measx = []
+time = []
+covarx = []
+covarv = []
+covarb = []
+trux = []
+zs = np.arange(0, 1435 + dt, dt)
+
+f = falling_object(starting_conditions[0], starting_conditions[1], starting_conditions[2], std_x, std_model)
+global_t = 0
+internal_t = 0
+skip = False
+# while f.x >= 0:
+while global_t <= 30:
+    f.update(dt)
+    #if np.mod(z, 2) == 0:
+    ukf.predict()
+    f.measure()
+    print('TIME = %f \t filter time = %f' % (global_t, np.mod(global_t, update_rate)))
+    if internal_t >= update_rate:
+        print('\tTIME = %f \t filter time = %f'% (global_t,np.mod(global_t ,update_rate)))
+        ukf.update(f.meas[0])
+        internal_t = 0
+        skip = True
+    trux.append(f.x)
+    measx.append(f.x - f.meas[0])
+    errx.append(f.x - ukf.x[0])
+    errv.append(f.v - ukf.x[1])
+    errb.append(f.b - ukf.x[2])
+    covarx.append(np.sqrt(ukf.P[0][0]))
+    covarv.append(np.sqrt(ukf.P[1][1]))
+    covarb.append(np.sqrt(ukf.P[2][2]))
+    time.append(global_t)
+    #else:
+    #measx.append(0)
+    uxs.append(ukf.x.copy())
+
+    global_t += dt
+    internal_t += dt
+
+    # print(global_t)
+
+errv = np.array(errv)
+errx = np.array(errx)
+errb = np.array(errb)
+trux = np.array(trux)
+measx = np.array(measx)
+
+uxs = np.array(uxs)
+mean_V_error = np.mean(abs(errv))
+std_v_error = np.std(abs(errv))
+mean_x_error = np.mean(abs(errx))
+std_x_error = np.std(abs(errx))
+mean_b_error = np.mean(abs(errb))
+std_b_error = np.std(abs(errb))
+
+print("mean x error = ", mean_x_error)
+print("std x error = ", std_x_error)
+print("mean v error = ", mean_V_error)
+print("std v error = ", std_v_error)
+print("mean b error = ", mean_b_error)
+print("std b error = ", std_b_error)
+
+
+plt.figure(1)
+plt.plot(time, np.array(covarv)*3, 'r')
+plt.plot(time, np.array(covarv)*-3, 'r')
+plt.plot(time, (errv), label='velocity difference')
+plt.title('non linear eqn velocity error')
+plt.legend()
+
+
+
+# plt.figure(2)
+# plt.plot(time, uxs[:, 1], label='filter')
+# plt.plot(time, truv, label=('model'))
+# #plt.scatter(time, measx, label='measure')
+# plt.title('non linear eqn velocity')
+# plt.legend()
+
+plt.figure(3)
+plt.plot(time, np.array(covarx)*3, 'r')
+plt.plot(time, np.array(covarx)*-3, 'r')
+plt.plot(time, measx, 'b', label='measurements')
+plt.plot(time, errx, 'y', label='position difference')
+plt.title('non linear eqn position')
+plt.legend()
+
+
+plt.figure(4)
+plt.plot(uxs[:, 0]-trux, 'y', label='filter')
+plt.title('non linear eqn position')
+plt.legend()
+
+plt.figure(5)
+plt.plot(time, errb, 'y', label='beta difference')
+plt.plot(time, np.array(covarb)*3, 'r')
+plt.plot(time, np.array(covarb)*-3, 'r')
+plt.title('non linear eqn drag coeff')
+plt.legend()
+
+plt.show()

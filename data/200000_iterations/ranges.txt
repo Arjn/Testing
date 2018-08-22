@@ -1,0 +1,24 @@
+observer_position = np.array([[0, 0, 1.e10],[1.e10, 0, 0.],[0, 1.e10, 0], [0., 0., 1e10],
+                              [1e10, 1e10, 1e10]])
+
+
+
+tracker_noise_range = [0.001, 1000] #ARCSECOND
+tracker_range_noise = [1e2, 1e3]
+
+dt_range = [0.1, 100]
+np.random.seed(400)
+true_b = 400.
+std_true_object_pos_range = np.array([1e2, 1e3])
+std_true_object_vel_range = np.array([1e1, 1e2])
+
+
+
+est_starting_conditions_range_pos = np.array([1e2, 1e3])
+est_starting_conditions_range_vel = np.array([1, 1e2])
+
+P_range_pos = [100 ** 2,1e3 ** 2]
+P_range_vel = [1e1 ** 2,1e2 ** 2]
+Q_range_pos = [0.01e1,1e1]
+Q_range_vel = [0.01e-1,1e0]
+sensor_sampling_time_range = [0.01,100]
