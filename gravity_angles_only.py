@@ -1,9 +1,5 @@
-# from filterpy.kalman import unscented_transform, MerweScaledSigmaPoints
-from filterpy.kalman import UnscentedKalmanFilter as UKF
 import Filter
 import scipy.stats as stats
-from filterpy.kalman import KalmanFilter
-from filterpy.common import Q_discrete_white_noise
 from scipy.integrate import odeint
 from numpy.random import randn
 from scipy.linalg import inv
@@ -62,8 +58,8 @@ def autocorr(x):
 
 # State is array of 6 elements: [x, y, z, xdot, ydot, zdot]
 X_t = []
-with open('true_pos', newline='') as csvfile:
-    reader = csv.reader(csvfile, delimiter=',', quotechar='|')
+with open('model_X.csv', newline='') as csvfile:
+    reader = csv.reader(csvfile, delimiter='\t', quotechar='|')
     for row in reader:
         temp = []
         for i in row:
@@ -71,26 +67,31 @@ with open('true_pos', newline='') as csvfile:
         X_t.append(temp)
 X_t = np.array(X_t).T
 
-constants = [-0.59783, 13.406, 3.986e5, 6374.]
+constants = [-0.59783, 13.406, 398600, 6374.]
 
-tracker_noise = 0.17e-3 #rad
-tracker_rng_noise = 1e-3
+tracker_noise = 1.7e-3**2 #rad
+tracker_rng_noise = 1e-3**2
 
 dt = 0.1
-np.random.seed(5000)
-P = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1.])
-Q = np.diag([1e-2, 1e-2, 2.4062e-5, 2.4062e-5, 1e-6])
-# Q = np.array([[dt**6/9 + dt**4/4, 0, dt**5/6 + dt**3/2, 0, 0], [0, dt**6/9 + dt**4/4, 0, dt**5/6 + dt**3/2, 0], [dt**5/6 + dt**3/2, 0, dt**4/4 + dt**2, 0, 0], [0, dt**5/6 + dt**3/2, 0, dt**4/4 + dt**2, 0], [0, 0, 0, 0, 0]])*2.4062e-5
-std_true_object = np.array([np.sqrt(2.4062e-5), np.sqrt(2.4062e-5), 0])
-est_starting_conditions = np.array([6500.4, 349.14, -1.8093, -6.7967, 0])#np.array([500., -1000., 1e5, 100., 100., 500.])
-true_starting_conditions = np.array([6500.4+normal(0,np.sqrt(P[0,0])), 349.14+normal(0,np.sqrt(P[1,1])), -1.8093+normal(0,np.sqrt(P[2,2])),
-                                    -6.7967+normal(0,np.sqrt(P[3,3])), 0.6932 ])# make library of positions of observers
-observer_position = np.array([[6374., 0]])
-observer_std = np.array([tracker_noise, tracker_rng_noise])
-
-
 kf_update_rate = 0.1
 sensor_sampling_time = 0.1
+
+
+qx = 0
+qv = 2.4064e-5
+qb = 1e-6
+np.random.seed(5000)
+P = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1.])
+Q = np.diag([qx, qx, qv, qv, qb])
+# Q = np.array([[dt**6/9 + dt**4/4, 0, dt**5/6 + dt**3/2, 0, 0], [0, dt**6/9 + dt**4/4, 0, dt**5/6 + dt**3/2, 0], [dt**5/6 + dt**3/2, 0, dt**4/4 + dt**2, 0, 0], [0, dt**5/6 + dt**3/2, 0, dt**4/4 + dt**2, 0], [0, 0, 0, 0, 0]])*2.4062e-5
+std_true_object = np.array([np.sqrt(qv), np.sqrt(qv), 0])
+est_starting_conditions = np.array([6500.4, 349.14, -1.8093, -6.7967, 0])#np.array([500., -1000., 1e5, 100., 100., 500.])
+# true_starting_conditions = np.array([6500.4, 349.14, -1.8093, -6.7967, 0.6932]) #np.array([normal(6500.4,np.sqrt(P[0,0])), normal(349.14,np.sqrt(P[1,1])), normal(-1.8093,np.sqrt(P[2,2])),
+                                    #normal(-6.7967,np.sqrt(P[3,3])), 0.6932 ])# make library of positions of observers
+observer_position = np.array([[6374., 0]])
+observer_var = np.array([copy.deepcopy(tracker_noise), copy.deepcopy(tracker_rng_noise)])
+
+
 # Q = np.array([[sensor_sampling_time ** 3 * phi/3, sensor_sampling_time ** 2 * phi/2, 0, 0],
 #  [sensor_sampling_time ** 2 * phi / 2, sensor_sampling_time * phi, 0, 0],
 #  [0, 0, sensor_sampling_time ** 3 * phi/3, sensor_sampling_time ** 2 * phi/2],
@@ -130,19 +131,18 @@ class falling_object(object):
 
     def update(self, dt):
         #Re-entry dynamics equations
-        self.b = self.b0*np.exp(self.X[4])
-        self.R = np.sqrt(self.X[0] **2 + self.X[1] **2)
+        self.R = np.sqrt(self.X[0] ** 2 + self.X[1] ** 2)
         self.V = np.sqrt(self.X[2] ** 2 + self.X[3] ** 2)
+        self.b = self.b0*np.exp(self.X[4])
         self.D = self.b*np.exp((self.R0 - self.R)/self.H0)*self.V
-        self.G = -self.mu/self.R**3
+        self.G = -self.mu/(self.R**3)
 
 
-
-        self.X[0] += self.X[2] * dt
-        self.X[1] += self.X[3] * dt
         self.X[2] += (self.D*self.X[2] + self.G*self.X[0])*dt + np.random.normal(0, self.std_model[0])
         self.X[3] += (self.D*self.X[3] + self.G*self.X[1])*dt + np.random.normal(0, self.std_model[1])
         self.X[4] += np.random.normal(0, self.std_model[2])
+        self.X[0] += self.X[2] * dt
+        self.X[1] += self.X[3] * dt
 
         self.F_Dot(dt)
 
@@ -189,11 +189,11 @@ def f_cv(X, dt):
     D = b * np.exp((R0 - R) /H0) * V
     G = -mu / R ** 3
 
-    X[0] += X[2] * dt
-    X[1] += X[3] * dt
     X[2] += (D * X[2] + G * X[0]) * dt
     X[3] += (D * X[3] + G * X[1]) * dt
-    X[4] = X[4]
+    X[0] += X[2] * dt
+    X[1] += X[3] * dt
+
     return X
 
 
@@ -340,12 +340,11 @@ v_error_storage = []
 
 for iterations in range(0,1):
     print(iterations)
-    true_starting_conditions = np.array([6500.4 + normal(0, np.sqrt(P[0, 0])), 349.14 + normal(0, np.sqrt(P[1, 1])),
-                                     -1.8093 + normal(0, np.sqrt(P[2, 2])),
-                                     -6.7967 + normal(0, np.sqrt(P[3, 3])), 0.6932])
-    Q_storage = []
-    Q_best = 0
-    Q_best_num = 10000000
+    true_starting_conditions = np.array(
+        [normal(6500.4, np.sqrt(P[0, 0])), normal(349.14, np.sqrt(P[1, 1])), normal(-1.8093, np.sqrt(P[2, 2])),
+         normal(-6.7967, np.sqrt(P[3, 3])), 0.6932])
+
+
     # for i in range(0,100):
     #     print(i)
     #     true_starting_conditions = np.array([0., 0., 3000 * np.cos(np.deg2rad(45)), 3000 * np.sin(
@@ -355,17 +354,17 @@ for iterations in range(0,1):
 
     dec = decimal.Decimal(str(dt))
     dec = abs(dec.as_tuple().exponent)
-    points = Filter.MerweScaledSigmaPoints(n=5, alpha=1, beta=2., kappa=1)
+    points = Filter.MerweScaledSigmaPoints(n=5, alpha=1, beta=0., kappa=-2)
     mult = 1 if ANGLES_ONLY else 2
-    ukf = Filter.UKF(dim_x=5, dim_z=mult * len(observer_position), fx=f_cv, hx=h_observer, dt=dt, points=points,
+    ukf = Filter.UKF(dim_x=5, dim_z=mult * len(observer_position), fx=f_cv, hx=h_observer, dt=kf_update_rate, points=points,
               z_mean_fn=z_mean, residual_z=residual_h)
     ukf.x = np.array([est_starting_conditions])
     if ANGLES_ONLY:
-        observer_std = np.array([tracker_noise, tracker_noise])
-        ukf.R_store = np.diag([observer_std[0] ** 2])
+        observer_std = np.array([np.sqrt(tracker_noise), np.sqrt(tracker_noise)])
+        ukf.R_store = np.diag([observer_var[0]])
     else:
-        observer_std = np.array([tracker_noise, tracker_noise, tracker_rng_noise])
-        ukf.R_store = np.diag([(observer_std[0])**2, (observer_std[2])**2])
+        observer_std = np.array([np.sqrt(tracker_noise), np.sqrt(tracker_noise), np.sqrt(tracker_rng_noise)])
+        ukf.R_store = np.diag([(observer_var[0]), (observer_var[1])])
     ukf.R = ukf.R_store
     # ukf.H = np.array([[1]])
     ukf.P = P
@@ -377,19 +376,19 @@ for iterations in range(0,1):
     truv = []
     measx = []
     time = []
-    covarx = []
+    std_est_x = []
     covary = []
-    covarv = []
+    std_est_v = []
+    std_est_b = []
     kalman_t = []
     meas_pos = []
     update_time = []
-    zs = np.arange(0, 1435 + dt, dt)
     ukf.Q = Q
     f = falling_object(true_starting_conditions, std_true_object, constants[0], constants[1], constants[2], constants[3])
     station = AngSensor(observer_position, observer_std, sensor_sampling_time)
     t = 0
     i = 0
-    J = inv(ukf.P)
+    # J = inv(ukf.P)
     J_storage = []
     while t < 200:
         f.update(dt)
@@ -410,13 +409,14 @@ for iterations in range(0,1):
             uxs.append(ukf.x.copy())
             trux.append(f.X.copy())
             time.append(t)
-            covarx.append(np.mean([ukf.P[0][0], ukf.P[1][1]]))
+            std_est_x.append(np.sqrt(np.mean([ukf.P[0][0], ukf.P[1][1]])))
             covary.append(ukf.P[2][2])
-            covarv.append(np.mean([ukf.P[2][2], ukf.P[3][3]]))
-            J = inv(ukf.Q) + np.dot(station.h_bar.T, inv(ukf.R)).dot(station.h_bar) - np.dot(np.dot(inv(ukf.Q), f.f_bar),
-                inv(J + np.dot(f.f_bar.T, inv(ukf.Q)).dot(f.f_bar)), np.dot(inv(ukf.Q), f.f_bar))
-
-            J_storage.append(np.diag(J))
+            std_est_v.append(np.sqrt(np.mean([ukf.P[2][2], ukf.P[3][3]])))
+            std_est_b.append(np.sqrt(ukf.P[4][4]))
+            # J = inv(ukf.Q) + np.dot(station.h_bar.T, inv(ukf.R)).dot(station.h_bar) - np.dot(np.dot(inv(ukf.Q), f.f_bar),
+            #     inv(J + np.dot(f.f_bar.T, inv(ukf.Q)).dot(f.f_bar)), np.dot(inv(ukf.Q), f.f_bar))
+            #
+            # J_storage.append(np.diag(J))
 
 
         t = round(t+dt, dec)
@@ -431,7 +431,7 @@ for iterations in range(0,1):
     CRLB = (1/(J_storage))
     uxs = np.array(uxs)
     trux = np.array(trux)
-
+    std_est_b = np.array(std_est_b)
 
 
     mean_x_error = [np.mean(np.sqrt((uxs[:, 0] - trux[:, 0])**2)), np.mean(np.sqrt((uxs[:, 1] - trux[:, 1])**2))]
@@ -454,7 +454,7 @@ print("std x error = ", std_x)
 print("mean v error = ", mean_v_error)
 print("std v error = ", std_v)
 sum = np.sum(mean_x_error) + np.sum(mean_v_error) + np.sum(std_x) + np.sum(std_v)
-print(sum)
+
     # if sum < Q_best_num:
     #     Q_best = ukf.Q
     #     Q_best_num = sum
@@ -484,14 +484,29 @@ print(sum)
 #     plt.legend()
 
 
-# # VELOCITY ERROR
+# VELOCITY ERROR
+tester = 0
+for i in range(0, len(time)):
+    if abs(uxs[i, 2] - trux[i, 2]) <= std_est_v[i]*3:
+        tester += 1
+    if abs(uxs[i, 3] - trux[i, 3]) <= std_est_v[i]*3:
+        tester += 1
+print(tester/(len(time)*2))
+tester = 0
+for i in range(0, len(time)):
+    if abs(uxs[i, 0] - trux[i, 0]) <= std_est_x[i]*3:
+        tester += 1
+    if abs(uxs[i, 1] - trux[i, 1]) <= std_est_x[i]*3:
+        tester += 1
+print(tester/(len(time)*2))
+
 plt.figure(1)
-plt.plot(time, abs(uxs[:, 2] -  trux[:, 2]), 'xkcd:blue', label='x-error',linewidth=1.0)
-plt.plot(time, abs(uxs[:, 3] -  trux[:,3]),'xkcd:green', label='y-error',linewidth=1.0)
+plt.plot(time, abs(uxs[:, 2] - trux[:, 2]), 'xkcd:blue', label='x-error',linewidth=1.0)
+plt.plot(time, abs(uxs[:, 3] - trux[:,3]),'xkcd:green', label='y-error',linewidth=1.0)
 # plt.plot(time, (uxs[:, 5] - trux[:, 5]), 'xkcd:orange', label='z-error',linewidth=3.0)
 # plt.plot(time, np.array(covarv)*-3, 'r')
-plt.plot(update_time, np.sqrt(CRLB[:,2]**2 + CRLB[:,3]**2), label='CRLB vx')
-plt.plot(time, np.array(covarv)*3, 'r')
+# plt.plot(update_time, np.sqrt(CRLB[:,2]**2 + CRLB[:,3]**2), label='CRLB vx')
+plt.plot(time, np.array(std_est_v) * 3, 'r', label='velocity 3-sigma')
 plt.title('Velocity Error Re-entry Problem')
 plt.xlabel('Time [s]')
 plt.ylabel('Error [km/s]')
@@ -505,10 +520,10 @@ plt.figure(2)
 plt.plot(update_time, abs(np.array(meas_pos)[:,0]),'xkcd:blue', label='measurements-only x', linewidth=0.1)
 plt.plot(update_time, abs(np.array(meas_pos)[:,1]),'xkcd:green', label='measurements-only y', linewidth=0.1)
 plt.plot(time, abs((uxs[:, 0] -  trux[:, 0])), 'xkcd:royal blue', label='x-error', linewidth=1.0)
-plt.plot(time, np.array(covarx)*3, 'xkcd:red', label='position-covariance')
+plt.plot(time, np.array(std_est_x) * 3, 'xkcd:red', label='position 3-sigma')
 # plt.plot(time, np.multiply(-3,np.array(covarx)), 'xkcd:black', label='position-covariance')
 plt.plot(time, abs(uxs[:, 1] -  trux[:, 1]), 'xkcd:bright green', label='y-error', linewidth=1.0)
-plt.plot(update_time, np.sqrt(CRLB[:,0]**2+ CRLB[:,1]**2), label='CRLB x')
+# plt.plot(update_time, np.sqrt(CRLB[:,0]**2+ CRLB[:,1]**2), label='CRLB x')
 # plt.plot(time, (uxs[:, 2] - trux[:, 2]), 'xkcd:orange', label='z-error', linewidth=3.0)
 plt.yscale('log')
 #plt.plot(time, np.array(covarx)*3, 'r')
@@ -522,48 +537,52 @@ plt.figure(8)
 plt.plot(time, autocorr((uxs[:, 0] -  trux[:, 0])), label='x-autocorrelation')
 plt.plot(time, autocorr((uxs[:, 1] -  trux[:, 1])), label='y-autocorrelation')
 plt.title('error autocorrelation')
+plt.xlabel('Time [s]')
+plt.ylabel(('Error autocorrelation'))
 plt.legend()
 
-plt.figure(7)
+# plt.figure(7)
+#
+#
+# plt.title('position error based only on measurements')
+# plt.legend()
 
-
-plt.title('position error based only on measurements')
-plt.legend()
-
-# VELOCITY
-plt.figure(3)
-plt.plot(time, uxs[:, 2], 'xkcd:green', label='filter vx', linewidth=3.0)
-plt.plot(time, uxs[:, 3], 'xkcd:orange', label='filter vy', linewidth=3.0)
-plt.plot(time,  trux[:, 2],linestyle='--', color='xkcd:dark green', label=('model x'))
-plt.plot(time,  trux[:, 3], linestyle='--', color='xkcd:dark orange', label=('model y'))
-#plt.scatter(time, measx, label='measure')
-plt.title('non linear eqn velocity')
-plt.legend()
+# # VELOCITY
+# plt.figure(3)
+# plt.plot(time, uxs[:, 2], 'xkcd:green', label='filter vx', linewidth=3.0)
+# plt.plot(time, uxs[:, 3], 'xkcd:orange', label='filter vy', linewidth=3.0)
+# plt.plot(time,  trux[:, 2],linestyle='--', color='xkcd:dark green', label=('model x'))
+# plt.plot(time,  trux[:, 3], linestyle='--', color='xkcd:dark orange', label=('model y'))
+# #plt.scatter(time, measx, label='measure')
+# plt.title('non linear eqn velocity')
+# plt.legend()
 
 
 # POSITION IN TIME
-plt.figure(5)
-plt.plot(time, uxs[:, 0], 'xkcd:green', label='filter x', linewidth=1.0)
-plt.plot(time, uxs[:, 1], 'xkcd:orange', label='filter y', linewidth=1.0)
-plt.plot(time,  trux[:, 0], linestyle='--', color='xkcd:dark green', label=('model x'))
-plt.plot(time,  trux[:, 1], linestyle='--', color='xkcd:dark orange', label=('model y'))
-# #plt.scatter(time, measx, s=2, label='measure')
-plt.title('non linear eqn position')
-plt.yscale('log')
-plt.legend()
+# plt.figure(5)
+# plt.plot(time, uxs[:, 0], 'xkcd:green', label='filter x', linewidth=1.0)
+# plt.plot(time, uxs[:, 1], 'xkcd:orange', label='filter y', linewidth=1.0)
+# plt.plot(time,  trux[:, 0], linestyle='--', color='xkcd:dark green', label=('model x'))
+# plt.plot(time,  trux[:, 1], linestyle='--', color='xkcd:dark orange', label=('model y'))
+# # #plt.scatter(time, measx, s=2, label='measure')
+# plt.title('non linear eqn position')
+# plt.yscale('log')
+# plt.legend()
 
-# POSITION IN SPACE
-plt.figure(6)
-plt.plot(uxs[:, 0], uxs[:, 1], 'xkcd:blue', label='filter POS 2D')
-plt.plot( X_t[:, 0],  X_t[:, 1], linestyle='--', color='xkcd:dark blue', label=('model'))
-plt.scatter(observer_position[:][:, 0], observer_position[:][:, 1], marker='x', label='observer')
-plt.title('non linear eqn position')
-plt.legend()
+# # POSITION IN SPACE
+# plt.figure(6)
+# plt.plot(uxs[:, 0], uxs[:, 1], 'xkcd:blue', label='filter POS 2D')
+# plt.plot( X_t[:, 0],  X_t[:, 1], linestyle='--', color='xkcd:dark blue', label=('model'))
+# plt.scatter(observer_position[:][:, 0], observer_position[:][:, 1], marker='x', label='observer')
+# plt.title('non linear eqn position')
+# plt.legend()
 
 plt.figure(7)
-plt.plot(time, uxs[:, 4] , 'xkcd:royal blue', label='aero_error', linewidth=1.0)
-plt.plot(time, trux[:, 4], label='true aero', linewidth=1.0)
+plt.semilogy(time, abs(uxs[:, 4] - trux[:, 4]) , 'xkcd:royal blue', label='aero_error', linewidth=1.0)
+plt.semilogy(time, std_est_b*3,'xkcd:red', label='3-sigma' )
 plt.title('Ballistic coefficient')
+plt.xlabel('Time [s]')
+plt.ylabel('Error')
 plt.legend()
 
 #Observations
@@ -574,6 +593,14 @@ plt.legend()
 #         plt.plot(time[:], np.array(station.storage_phi[i][1:]), 'r', label='phi')
 # plt.title('observations')
 # plt.legend()
+
+# plt.semilogy(abs(X_t[:,0] - trux[:,0]), label='x')
+# plt.semilogy(abs(X_t[:,1] - trux[:,1]),label='y')
+# plt.semilogy(abs(X_t[:,2] - trux[:,2]),label='vx')
+# plt.semilogy(abs(X_t[:,3] - trux[:,3]),label='vy')
+# plt.semilogy(abs(X_t[:,4] - trux[:,4]),label='B')
+# plt.legend()
+# print(np.mean(abs(X_t[:,4] - trux[:,4])))
 
 plt.show()
 # #print('UKF standard deviation {:.3f} meters'.format(np.std(uxs - xs)))
